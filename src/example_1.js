@@ -1,4 +1,5 @@
 // 5p.js
+// Julia 방식 + 복합 trap + 민감한 색 매핑
 class Complex {
     constructor(re, im) {
       this.re = re;

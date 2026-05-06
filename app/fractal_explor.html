@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>프랙탈 탐색기</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: sans-serif;
+      background: #111;
+      color: #eee;
+      padding: 1.5rem;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+    h1 { font-size: 18px; font-weight: 500; margin-bottom: 1rem; color: #fff; }
+    .panel { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+    .ctrl { display: flex; flex-direction: column; gap: 4px; }
+    .ctrl label { font-size: 12px; color: #aaa; }
+    .ctrl select {
+      font-size: 13px;
+      background: #222;
+      color: #eee;
+      border: 0.5px solid #444;
+      border-radius: 6px;
+      padding: 4px 6px;
+    }
+    .sliders { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+    .srow { display: flex; flex-direction: column; gap: 4px; }
+    .srow label {
+      font-size: 12px;
+      color: #aaa;
+      display: flex;
+      justify-content: space-between;
+    }
+    .srow label span {
+      font-weight: 500;
+      color: #fff;
+      font-family: monospace;
+    }
+    input[type=range] { width: 100%; accent-color: #5DCAA5; }
+    .btn-row { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
+    button {
+      background: transparent;
+      color: #eee;
+      border: 0.5px solid #555;
+      border-radius: 6px;
+      padding: 6px 14px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    button:hover { background: #222; }
+    button:active { transform: scale(0.98); }
+    .status { font-size: 12px; color: #888; font-family: monospace; }
+    canvas {
+      display: block;
+      width: 100%;
+      border-radius: 10px;
+      border: 0.5px solid #333;
+      background: #000;
+    }
+  </style>
+</head>
+<body>
+ 
+<h1>프랙탈 탐색기</h1>
+ 
+<div class="panel">
+  <div class="ctrl">
+    <label>반복식</label>
+    <select id="sel-formula">
+      <option value="julia">Julia (z²+c)</option>
+      <option value="celtic">Celtic (|Re|+c)</option>
+      <option value="buffalo">Buffalo (|Re|+|Im|)</option>
+      <option value="burning">Burning Ship</option>
+      <option value="cubic">Cubic (z³+c)</option>
+    </select>
+  </div>
+  <div class="ctrl">
+    <label>트랩</label>
+    <select id="sel-trap">
+      <option value="circle">원형</option>
+      <option value="cross">십자</option>
+      <option value="dot">점 (원점)</option>
+      <option value="hline">수평선</option>
+      <option value="vline">수직선</option>
+      <option value="hyperbola">쌍곡선</option>
+    </select>
+  </div>
+  <div class="ctrl">
+    <label>색상</label>
+    <select id="sel-color">
+      <option value="bw">흑백</option>
+      <option value="fire">불꽃</option>
+      <option value="teal">청록</option>
+      <option value="purple">보라</option>
+      <option value="contour">등고선</option>
+    </select>
+  </div>
+</div>
+ 
+<div class="sliders">
+  <div class="srow">
+    <label>c (실수부) <span id="cre-out">-0.800</span></label>
+    <input type="range" id="cre" min="-2" max="2" step="0.01" value="-0.80">
+  </div>
+  <div class="srow">
+    <label>c (허수부) <span id="cim-out">-0.160</span></label>
+    <input type="range" id="cim" min="-2" max="2" step="0.01" value="-0.16">
+  </div>
+  <div class="srow">
+    <label>반복 횟수 <span id="iter-out">40</span></label>
+    <input type="range" id="iter" min="10" max="100" step="5" value="40">
+  </div>
+  <div class="srow">
+    <label>트랩 감도 <span id="sens-out">0.050</span></label>
+    <input type="range" id="sens" min="0.005" max="0.3" step="0.005" value="0.05">
+  </div>
+</div>
+ 
+<div class="btn-row">
+  <button onclick="startRender()">그리기</button>
+  <button id="btn-stop" onclick="stopRender()" style="display:none">중지</button>
+  <span class="status" id="status">준비</span>
+</div>
+ 
+<canvas id="cv" width="500" height="500"></canvas>
+ 
+<script>
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const W = cv.width, H = cv.height;
+let imgData = ctx.createImageData(W, H);
+let rafId = null, col = 0, rendering = false;
+ 
+const formulas = {
+  julia:    (zr, zi, cr, ci) => [zr*zr - zi*zi + cr, 2*zr*zi + ci],
+  celtic:   (zr, zi, cr, ci) => [Math.abs(zr*zr - zi*zi) + cr, 2*zr*zi + ci],
+  buffalo:  (zr, zi, cr, ci) => [Math.abs(zr*zr - zi*zi) + cr, Math.abs(2*zr*zi) + ci],
+  burning:  (zr, zi, cr, ci) => [zr*zr - zi*zi + cr, Math.abs(2*zr*zi) + ci],
+  cubic:    (zr, zi, cr, ci) => [
+    zr*zr*zr - 3*zr*zi*zi + cr,
+    3*zr*zr*zi - zi*zi*zi + ci
+  ],
+};
+ 
+const traps = {
+  circle:    (zr, zi) => Math.abs(1 - Math.sqrt(zr*zr + zi*zi)),
+  cross:     (zr, zi) => Math.min(Math.abs(zr), Math.abs(zi)),
+  dot:       (zr, zi) => Math.sqrt(zr*zr + zi*zi),
+  hline:     (zr, zi) => Math.abs(zi),
+  vline:     (zr, zi) => Math.abs(zr),
+  hyperbola: (zr, zi) => Math.abs(Math.abs(zr*zr) - Math.abs(zi*zi)),
+};
+ 
+const colorizers = {
+  bw:      (s) => { const v = Math.round(255*(1-s)); return [v, v, v]; },
+  fire:    (s) => { const t = 1-s; return [Math.round(255*t*t), Math.round(120*t*t*t), Math.round(20*t)]; },
+  teal:    (s) => { const t = 1-s; return [Math.round(20*t), Math.round(180*t*t), Math.round(160*t)]; },
+  purple:  (s) => { const t = 1-s; return [Math.round(160*t*t), Math.round(40*t), Math.round(220*t)]; },
+  contour: (s) => { const v = (s*20) % 1 < 0.15 ? 255 : 30; return [v, v, v]; },
+};
+ 
+function getParams() {
+  return {
+    formula:  formulas[document.getElementById('sel-formula').value],
+    trap:     traps[document.getElementById('sel-trap').value],
+    colorize: colorizers[document.getElementById('sel-color').value],
+    cr:       parseFloat(document.getElementById('cre').value),
+    ci:       parseFloat(document.getElementById('cim').value),
+    maxIter:  parseInt(document.getElementById('iter').value),
+    sens:     parseFloat(document.getElementById('sens').value),
+  };
+}
+ 
+function renderCol(i, p) {
+  for (let j = 0; j < H; j++) {
+    const px = (i / W) * 4 - 2;
+    const py = (j / H) * 4 - 2;
+    let zr = px, zi = py, s = 1;
+    let hit = false;
+    for (let k = 0; k < p.maxIter; k++) {
+      const [nzr, nzi] = p.formula(zr, zi, p.cr, p.ci);
+      zr = nzr; zi = nzi;
+      if (zr*zr + zi*zi > 4) { hit = true; break; }
+      s = Math.min(s, p.trap(zr, zi));
+    }
+    const idx = 4 * (i + j * W);
+    if (!hit && s < p.sens) {
+      const norm = Math.max(0, Math.min(1, s / p.sens));
+      const [r, g, b] = p.colorize(norm);
+      imgData.data[idx]   = r;
+      imgData.data[idx+1] = g;
+      imgData.data[idx+2] = b;
+      imgData.data[idx+3] = 255;
+    } else {
+      imgData.data[idx]   = 0;
+      imgData.data[idx+1] = 0;
+      imgData.data[idx+2] = 0;
+      imgData.data[idx+3] = 255;
+    }
+  }
+}
+ 
+function startRender() {
+  if (rendering) stopRender();
+  imgData = ctx.createImageData(W, H);
+  col = 0;
+  rendering = true;
+  document.getElementById('btn-stop').style.display = 'inline-block';
+  document.getElementById('status').textContent = '렌더링 중...';
+  const p = getParams();
+  const COLS = 8;
+  function frame() {
+    for (let d = 0; d < COLS; d++) {
+      if (col >= W) { finish(); return; }
+      renderCol(col++, p);
+    }
+    ctx.putImageData(imgData, 0, 0);
+    document.getElementById('status').textContent = Math.round(col / W * 100) + '%';
+    rafId = requestAnimationFrame(frame);
+  }
+  rafId = requestAnimationFrame(frame);
+}
+ 
+function stopRender() {
+  if (rafId) cancelAnimationFrame(rafId);
+  rendering = false;
+  document.getElementById('btn-stop').style.display = 'none';
+  document.getElementById('status').textContent = '중지됨';
+}
+ 
+function finish() {
+  ctx.putImageData(imgData, 0, 0);
+  rendering = false;
+  document.getElementById('btn-stop').style.display = 'none';
+  document.getElementById('status').textContent = '완료';
+}
+ 
+['cre', 'cim', 'iter', 'sens'].forEach(id => {
+  const el = document.getElementById(id);
+  const out = document.getElementById(id + '-out');
+  el.addEventListener('input', () => {
+    out.textContent = parseFloat(el.value).toFixed(id === 'iter' ? 0 : 3);
+  });
+});
+ 
+startRender();
+</script>
+ 
+</body>
+</html>
